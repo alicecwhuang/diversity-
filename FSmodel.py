@@ -9,6 +9,8 @@ import random
 import pandas as pd
 import itertools
 import math
+import concurrent.futures
+import time
 
 
 # In[10]:
@@ -19,8 +21,6 @@ class Coin:
         self.bias = bias
     def toss(self, n=1000):
         return np.random.binomial(n, self.bias, size=None)
-
-
 # In[11]:
 
 
@@ -32,8 +32,9 @@ class Agent:
         self.coinA = coinA
         self.coinB = coinB
         """Credence is modelled by beta distribution. Record parameters alpha and beta for each coin."""
-        self.cred = {self.coinA: np.array(random.choices(range(1, 5), k=2)), 
-                     self.coinB: np.array(random.choices(range(1, 5), k=2))}
+        self.cred = {self.coinA: np.random.uniform(low=1, high=4, size=2),
+                     self.coinB: np.random.uniform(low=1, high=4, size=2)}
+
     def update(self, coin, data):
         """data in the form [head, tail]"""
         self.cred[coin] = np.sum([self.cred[coin], data], axis=0)
@@ -71,23 +72,12 @@ class Model:
         for i in range(n_all):
             self.agents.append(Agent(i, self.coinA, self.coinB, self.w, self.k))
         """divide agents into subgroups"""
-        """parameter div specifies largest subgroup size"""
-        """e.g. div=0.7 means 7-3 (2 subgroups) and div=0.4 means 4-4-2 (2 subgroups)"""
-        for a in self.agents:
-            self.subgroups[a] = [a]
-        if self.div > 0:
-        """if div=0 no other ingroup member other than self"""
-            M = self.agents
-            remaining = n_all
-            size = math.ceil(n_all*self.div)
-            while remaining > size:
-                subgroup = random.choices(M, k=size)
-                for m in subgroup:
-                    self.subgroups[m] = subgroup
-                remaining -= size
-                M = [x for x in M if x not in subgroup]
-            for m in M:
-                self.subgroups[m] = M
+        size = round(10*self.div)
+        self.subgroups = dict()
+        for a in self.agents[0:size]:
+            self.subgroups[a] = self.agents[0:size]
+        for a in self.agents[size:10]:
+            self.subgroups[a] = self.agents[size:10]
         """record choices of which coin to flip"""
         self.choices= dict()
         for a in self.agents:
@@ -119,80 +109,82 @@ class Model:
             self.choices[a] = a.choose(n_inA, n_inB, self.n_all)
 
 
-# In[13]:
+cols = ['k', 'w', 'epsilon', 'n_all', 'div', 'alphaA', 'betaA', 'alphaB', 'betaB', 'choices']
+data = pd.DataFrame(columns=cols)
 
 
-cols = ['k', 'w', 'epsilon', 'n_all', 'div', 
-        'alphaA', 'betaA', 'alphaB', 'betaB', 'choices']
-df = pd.DataFrame(columns=cols)
+def run_distrust():
+    cols = ['k', 'w', 'epsilon', 'n_all', 'div', 
+            'alphaA', 'betaA', 'alphaB', 'betaB', 'choices']
+    df = pd.DataFrame(columns=cols)
+    k = 0 # No conformity
+    epsilon = 0.001 # difference between coin A and coin B biases
+    n_all = 10 # agents per group
+    for w in [0.005, 0.0125, 0.1, 0.5, 1]: # levels of intergroup trust
+        for div in [0.5, 0.7, 0.9]: # subgroup compositions 5-5, 7-3, 9-1
+            M = Model(w=w, k=k, epsilon=epsilon, div=div, n_all=n_all)
+            for t in range(3000): # 3000 time steps
+                M.update()
+                M.choose()
+            df = df.append(pd.DataFrame([[k, 
+                                          w,
+                                          epsilon,
+                                          n_all,
+                                          div,
+                                          [a.cred[M.coinA][0] for a in M.agents],
+                                          [a.cred[M.coinA][1] for a in M.agents],
+                                          [a.cred[M.coinB][0] for a in M.agents],
+                                          [a.cred[M.coinB][1] for a in M.agents],
+                                          ['A' if c.bias==0.5 else 'B' for c in list(M.choices.values())]
+                                          ]], 
+                                        columns=cols), 
+                           ignore_index=True)
+    return(df)
 
 
-# In[35]:
+if __name__ == '__main__':
+    with concurrent.futures.ProcessPoolExecutor() as executor:
+        results = [executor.submit(run_distrust) for i in range(2000)]
+
+        for f in concurrent.futures.as_completed(results):
+            data = data.append(f.result())
+
+data.to_csv('test.csv', index=False)
 
 
-runs_per_config = 400
+def run_conformity():
+    cols = ['k', 'w', 'epsilon', 'n_all', 'div', 
+            'alphaA', 'betaA', 'alphaB', 'betaB', 'choices']
+    df = pd.DataFrame(columns=cols)
+    w = 1 # No intergroup distrust
+    epsilon = 0.001 # difference between coin A and coin B biases
+    n_all = 10 # agents per group
+    for k in K: # levels of intergroup trust
+        for div in [0.5, 0.7, 0.9]: # subgroup compositions 5-5, 7-3, 9-1
+            M = Model(w=w, k=k, epsilon=epsilon, div=div, n_all=n_all)
+            for t in range(3000): # 3000 time steps
+                M.update()
+                M.choose()
+            df = df.append(pd.DataFrame([[k, 
+                                          w,
+                                          epsilon,
+                                          n_all,
+                                          div,
+                                          [a.cred[M.coinA][0] for a in M.agents],
+                                          [a.cred[M.coinA][1] for a in M.agents],
+                                          [a.cred[M.coinB][0] for a in M.agents],
+                                          [a.cred[M.coinB][1] for a in M.agents],
+                                          ['A' if c.bias==0.5 else 'B' for c in list(M.choices.values())]
+                                          ]], 
+                                        columns=cols), 
+                           ignore_index=True)
+    return(df)
 
-"""Distrust"""
-for run in range(runs_per_config):
-    for k in [0]: # set k=0. No conformity.
-        for w in [0, 0.005, 0.0125, 0.1, 0.5, 1]: # levels of intergroup trust
-            for epsilon in [0.001]: # difference between coin A and coin B biases
-                for n_all in [10]: # agents per group
-                    for div in [0.5, 0.7, 0.9]: # subgroup compositions 5-5, 7-3, 9-1
-                        M = Model(w=w, k=k, epsilon=epsilon, div=div, n_all=n_all)
-                        for t in range(3000): # 3000 time steps
-                            M.update()
-                            M.choose()
-                            alphaA = [a.cred[M.coinA][0] for a in M.agents]
-                            betaA = [a.cred[M.coinA][1] for a in M.agents]
-                            alphaB = [a.cred[M.coinB][0] for a in M.agents]
-                            betaB = [a.cred[M.coinB][1] for a in M.agents]
-                            choices = ['A' if c.bias==0.5 else 'B' for c in list(M.choices.values())]
-                        df = df.append(pd.DataFrame([[k, 
-                                                      w,
-                                                      epsilon,
-                                                      n_all,
-                                                      div,
-                                                      alphaA,
-                                                      betaA,
-                                                      alphaB,
-                                                      betaB,
-                                                      choices]], 
-                                                    columns=cols), 
-                                       ignore_index=True)
-                        df.to_csv('test.csv', index=False)
+if __name__ == '__main__':
+    with concurrent.futures.ProcessPoolExecutor() as executor:
+        results = [executor.submit(run_conformity) for i in range(2000)]
 
+        for f in concurrent.futures.as_completed(results):
+            data = data.append(f.result())
 
-"""Conformity""" 
-for run in range(runs_per_config):
-    for k in [0.01, 0.02, 0.05, 0.1]: # levels of conformity 
-        for w in [1]: # set w=1. No intergroup distrust
-            for epsilon in [0.001]:
-                for n_all in [10]:
-                    for div in [0.5, 1]: # subgroup compositions 5-5 and 10-0
-                        M = Model(w=w, k=k, epsilon=epsilon, div=div, n_all=n_all)
-                        for t in range(3000):
-                            M.update()
-                            M.choose()
-                            alphaA = [a.cred[M.coinA][0] for a in M.agents]
-                            betaA = [a.cred[M.coinA][1] for a in M.agents]
-                            alphaB = [a.cred[M.coinB][0] for a in M.agents]
-                            betaB = [a.cred[M.coinB][1] for a in M.agents]
-                            choices = ['A' if c.bias==0.5 else 'B' for c in list(M.choices.values())]
-                        df = df.append(pd.DataFrame([[k, 
-                                                      w,
-                                                      epsilon,
-                                                      n_all,
-                                                      div,
-                                                      alphaA,
-                                                      betaA,
-                                                      alphaB,
-                                                      betaB,
-                                                      choices]], 
-                                                    columns=cols), 
-                                       ignore_index=True)
-                        df.to_csv('test.csv', index=False)
-
-
-
-
+data.to_csv('test.csv', index=False)
