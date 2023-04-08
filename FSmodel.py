@@ -57,7 +57,8 @@ class Agent:
 
 
 class Model:
-    def __init__(self, w=0.5, k=0.5, epsilon=0.01, div=0.5, n_all=8):
+    def __init__(self, w, k, epsilon=0.001, div=0.5, n_all=10):
+        np.random.seed()
         self.w = w # intergroup distrust
         self.k = k # conformity
         self.epsilon = epsilon # difference between coins (difficulty)
@@ -98,17 +99,19 @@ class Model:
                     
     def choose(self):
         """all agents choose which coin to flip in the next round"""
+        n_in = {key: [] for key in self.agents}
         for a in self.agents:
-            n_inA = 0
-            n_inB = 0
-            for b in self.subgroups[a]:
-                if self.choices[b].bias == 0.5:
-                    n_inA += 1
-                else:
-                    n_inB += 1
-            self.choices[a] = a.choose(n_inA, n_inB, self.n_all)
+            if n_in[a] == []:
+                n_inA = sum([int(self.choices[b].bias==0.5) for b in self.subgroups[a]])
+                n_inB = len(self.subgroups[a]) - n_inA
+                for b in self.subgroups[a]:
+                    n_in[b] = (n_inA, n_inB)
+        for a in self.agents:
+            self.choices[a] = a.choose(n_in[a][0], n_in[a][1], self.n_all)
 
 
+W = [0.005, 0.0125, 0.1, 0.5, 1]
+K = [0, 0.00625, 0.0125, 0.025, 0.05, 0.1]
 cols = ['k', 'w', 'epsilon', 'n_all', 'div', 'alphaA', 'betaA', 'alphaB', 'betaB', 'choices']
 data = pd.DataFrame(columns=cols)
 
@@ -120,7 +123,7 @@ def run_distrust():
     k = 0 # No conformity
     epsilon = 0.001 # difference between coin A and coin B biases
     n_all = 10 # agents per group
-    for w in [0.005, 0.0125, 0.1, 0.5, 1]: # levels of intergroup trust
+    for w in W: # levels of intergroup trust
         for div in [0.5, 0.7, 0.9]: # subgroup compositions 5-5, 7-3, 9-1
             M = Model(w=w, k=k, epsilon=epsilon, div=div, n_all=n_all)
             for t in range(3000): # 3000 time steps
@@ -141,15 +144,16 @@ def run_distrust():
                            ignore_index=True)
     return(df)
 
-
+all_results = []
 if __name__ == '__main__':
     with concurrent.futures.ProcessPoolExecutor() as executor:
-        results = [executor.submit(run_distrust) for i in range(2000)]
+        results = [executor.submit(run_distrust) for i in range(10000)]
 
         for f in concurrent.futures.as_completed(results):
-            data = data.append(f.result())
+            all_results.append(f.result())
 
-data.to_csv('test.csv', index=False)
+data = data.append(pd.concat(all_results, ignore_index=True))
+data.to_csv('wtest.csv', index=False)
 
 
 def run_conformity():
@@ -157,10 +161,10 @@ def run_conformity():
             'alphaA', 'betaA', 'alphaB', 'betaB', 'choices']
     df = pd.DataFrame(columns=cols)
     w = 1 # No intergroup distrust
-    epsilon = 0.001 # difference between coin A and coin B biases
+    epsilon = 0.01 # difference between coin A and coin B biases
     n_all = 10 # agents per group
     for k in K: # levels of intergroup trust
-        for div in [0.5, 0.7, 0.9]: # subgroup compositions 5-5, 7-3, 9-1
+        for div in [0.5, 0.7, 0.9, 1]: # subgroup compositions 5-5, 7-3, 9-1
             M = Model(w=w, k=k, epsilon=epsilon, div=div, n_all=n_all)
             for t in range(3000): # 3000 time steps
                 M.update()
@@ -180,11 +184,13 @@ def run_conformity():
                            ignore_index=True)
     return(df)
 
+all_results = []
 if __name__ == '__main__':
     with concurrent.futures.ProcessPoolExecutor() as executor:
-        results = [executor.submit(run_conformity) for i in range(2000)]
+        results = [executor.submit(run_conformity) for i in range(500)]
 
         for f in concurrent.futures.as_completed(results):
-            data = data.append(f.result())
+            all_results.append(f.result())
 
-data.to_csv('test.csv', index=False)
+data = data.append(pd.concat(all_results, ignore_index=True))
+data.to_csv('ktest.csv', index=False)
